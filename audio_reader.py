@@ -84,7 +84,7 @@ class AudioReader(object):
                     stop = True
                     break
                 # Remove silence
-                audio = trim_silence(audio[:, 0])
+                #audio = trim_silence(audio[:, 0])
                 if self.sample_size:
                     # Cut samples into fixed size pieces
                     buffer_ = np.append(buffer_, audio)

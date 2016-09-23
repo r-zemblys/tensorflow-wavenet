@@ -27,7 +27,7 @@ LEARNING_RATE = 0.02
 WAVENET_PARAMS = './wavenet_params.json'
 STARTED_DATESTRING = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
 SAMPLE_SIZE = 100000
-
+L2_REGULARIZATION_STRENGTH=5e-4
 
 def get_arguments():
     parser = argparse.ArgumentParser(description='WaveNet example network')
@@ -64,6 +64,9 @@ def get_arguments():
     parser.add_argument('--sample_size', type=int, default=SAMPLE_SIZE,
                         help='Concatenate and cut audio samples to this many '
                         'samples')
+    parser.add_argument('--l2_regularization_strength', type=float, 
+                        default=L2_REGULARIZATION_STRENGTH,
+                        help='L2 regularization strength ')
     return parser.parse_args()
 
 
@@ -158,7 +161,13 @@ def main():
     logdir = directories['logdir']
     logdir_root = directories['logdir_root']
     restore_from = directories['restore_from']
-
+    
+    #setup learning rate
+    lr_fname='%s/lr.config'%logdir
+    if not(os.path.exists(lr_fname)):
+    with open(lr_fname, 'w') as f:
+        f.write(str(args.learning_rate))
+        
     # Even if we restored the model, we will treat it as new training
     # if the trained model is written into an arbitrary location.
     is_overwritten_training = logdir != restore_from
@@ -188,8 +197,12 @@ def main():
         skip_channels=wavenet_params["skip_channels"],
         quantization_channels=wavenet_params["quantization_channels"],
         use_biases=wavenet_params["use_biases"])
-    loss = net.loss(audio_batch)
-    optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+    
+    learning_rate = tf.placeholder(tf.float32, shape=[])
+    tf.scalar_summary("LR", learning_rate)
+    
+    loss = net.loss(audio_batch, C=args.l2_regularization_strength)
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
     trainable = tf.trainable_variables()
     optim = optimizer.minimize(loss, var_list=trainable)
 
@@ -226,6 +239,12 @@ def main():
     try:
         for step in range(saved_global_step + 1, args.num_steps):
             start_time = time.time()
+            
+            #read learning rate
+            with open(lr_fname, 'r') as f:
+                lr=np.float32(f.read().strip())
+            feed={learning_rate: lr}
+            
             if args.store_metadata and step % 50 == 0:
                 # Slow run that stores extra information for debugging.
                 print('Storing metadata')
@@ -234,7 +253,8 @@ def main():
                 summary, loss_value, _ = sess.run(
                     [summaries, loss, optim],
                     options=run_options,
-                    run_metadata=run_metadata)
+                    run_metadata=run_metadata,
+                    feed=feed)
                 writer.add_summary(summary, step)
                 writer.add_run_metadata(run_metadata,
                                         'step_{:04d}'.format(step))
@@ -243,7 +263,7 @@ def main():
                 with open(timeline_path, 'w') as f:
                     f.write(tl.generate_chrome_trace_format(show_memory=True))
             else:
-                summary, loss_value, _ = sess.run([summaries, loss, optim])
+                summary, loss_value, _ = sess.run([summaries, loss, optim], feed=feed)
                 writer.add_summary(summary, step)
 
             duration = time.time() - start_time
